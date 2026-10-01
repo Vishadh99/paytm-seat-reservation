@@ -22,6 +22,8 @@ from . import db
 from .auth import Principal, current_user
 from .config import settings
 from .errors import ApiError
+from .observability import (DB_RETRIES, RESERVATIONS_CANCELLED, RESERVATIONS_CONFIRMED,
+                            RESERVATIONS_DECLINED, SEATS_CONFIRMED, SEATS_RELEASED, annotate)
 from .shows import SEAT_RE, parse_show_id
 
 router = APIRouter()
@@ -138,17 +140,18 @@ async def _reserve_tx(conn, show_id: uuid.UUID, user: Principal, seats: list[str
     if show is None:
         raise ApiError(404, "show_not_found", "no such show")
 
-    # Idempotency gate. If another request with the same (user, key) is in flight, this
+    # Idempotency gate. If another request with the same (user, show, key) is in flight, this
     # INSERT blocks on its uncommitted row and then resolves: DO NOTHING if it committed,
     # insert if it rolled back. Either way exactly one transaction owns the key.
     inserted = await conn.fetchval(
-        "INSERT INTO idempotency_keys (user_id, key, request_hash) VALUES ($1, $2, $3) "
+        "INSERT INTO idempotency_keys (user_id, show_id, key, request_hash) VALUES ($1, $2, $3, $4) "
         "ON CONFLICT DO NOTHING RETURNING 1",
-        user.user_id, key, req_hash)
+        user.user_id, show_id, key, req_hash)
     if inserted is None:
         prior = await conn.fetchrow(
-            "SELECT request_hash, status_code, response FROM idempotency_keys WHERE user_id = $1 AND key = $2",
-            user.user_id, key)
+            "SELECT request_hash, status_code, response FROM idempotency_keys "
+            "WHERE user_id = $1 AND show_id = $2 AND key = $3",
+            user.user_id, show_id, key)
         if prior["request_hash"] != req_hash:
             return "idempotency_key_reuse", 409, {
                 "error": "idempotency_key_reuse",
@@ -163,9 +166,9 @@ async def _reserve_tx(conn, show_id: uuid.UUID, user: Principal, seats: list[str
         status, outcome, body, rid = d.status, d.reason, d.body, None
 
     await conn.execute(
-        "UPDATE idempotency_keys SET status_code = $3, response = $4::json, reservation_id = $5 "
-        "WHERE user_id = $1 AND key = $2",
-        user.user_id, key, status, json.dumps(body), rid and uuid.UUID(rid))
+        "UPDATE idempotency_keys SET status_code = $4, response = $5::json, reservation_id = $6 "
+        "WHERE user_id = $1 AND show_id = $2 AND key = $3",
+        user.user_id, show_id, key, status, json.dumps(body), rid and uuid.UUID(rid))
     return outcome, status, body
 
 
@@ -176,6 +179,7 @@ async def _with_retry(fn, *args):
                 async with conn.transaction():
                     return await fn(conn, *args)
             except _RETRYABLE:
+                DB_RETRIES.inc()
                 if attempt == 4:
                     raise
 
@@ -188,6 +192,7 @@ async def reserve(
     idempotency_key_header: str | None = Header(default=None, alias="Idempotency-Key"),
 ):
     sid = parse_show_id(show_id)
+    annotate(user_id=user.user_id, show_id=str(sid), seats=body.seats)
     if idempotency_key_header and body.idempotency_key and idempotency_key_header != body.idempotency_key:
         raise ApiError(422, "invalid_request", "Idempotency-Key header and body idempotency_key differ")
     key = idempotency_key_header or body.idempotency_key
@@ -195,6 +200,13 @@ async def reserve(
         # No key supplied: the request is still safe, just not deduplicated on retry.
         key = f"auto:{uuid.uuid4()}"
     outcome, status, resp = await _with_retry(_reserve_tx, sid, user, body.seats, key, _request_hash(sid, body.seats))
+    # Counters move only after the transaction has committed.
+    if outcome == "confirmed":
+        RESERVATIONS_CONFIRMED.inc()
+        SEATS_CONFIRMED.inc(len(body.seats))
+    else:
+        RESERVATIONS_DECLINED.labels(outcome).inc()
+    annotate(outcome=outcome, reservation_id=resp.get("reservation_id"))
     headers = {"Idempotent-Replayed": "true"} if outcome == "idempotent_replay" else None
     return JSONResponse(status_code=status, content=resp, headers=headers)
 
@@ -242,7 +254,12 @@ async def cancel(reservation_id: str, user: Principal = Depends(current_user)):
         rid = uuid.UUID(reservation_id)
     except ValueError:
         raise ApiError(404, "reservation_not_found", "no such reservation") from None
-    _, view = await _with_retry(_cancel_tx, rid, user)
+    annotate(user_id=user.user_id, reservation_id=str(rid))
+    outcome, view = await _with_retry(_cancel_tx, rid, user)
+    if outcome == "cancelled":
+        RESERVATIONS_CANCELLED.inc()
+        SEATS_RELEASED.inc(len(view["seats"]))
+    annotate(outcome=outcome)
     return view
 
 

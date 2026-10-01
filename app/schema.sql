@@ -52,16 +52,17 @@ CREATE TABLE IF NOT EXISTS user_quota (
     PRIMARY KEY (show_id, user_id)
 );
 
--- Idempotency keys are scoped to the authenticated user: user B can never replay or
--- collide with user A's key. We store the final HTTP outcome (success *or* decline)
+-- Idempotency keys are scoped to (authenticated user, show): user B can never replay or
+-- collide with user A's key, and a client reusing "k1" on a different show is a new request. We store the final HTTP outcome (success *or* decline)
 -- so a retry gets byte-for-byte the same answer.
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     user_id        text        NOT NULL,
+    show_id        uuid        NOT NULL,
     key            text        NOT NULL,
     request_hash   text        NOT NULL,
     status_code    integer,
     response       json,             -- json (not jsonb) keeps replayed bodies byte-identical
     reservation_id uuid,
     created_at     timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, key)
+    PRIMARY KEY (user_id, show_id, key)
 );
