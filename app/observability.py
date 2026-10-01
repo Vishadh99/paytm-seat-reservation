@@ -5,6 +5,7 @@ committed (in the route handler, once the DB call returns), so a counter can nev
 run ahead of the database. Seat gauges are not tracked in-process at all — they are
 read from Postgres at scrape time, so they reconcile with GET /shows by construction.
 """
+import collections
 import contextvars
 import json
 import logging
@@ -54,11 +55,30 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(out, default=str)
 
 
+class RingBufferHandler(logging.Handler):
+    """Keeps the last N formatted log lines in memory so reviewers can read live logs
+    over HTTP (GET /logs) without platform access. Per worker process."""
+
+    def __init__(self, capacity: int = 5000):
+        super().__init__()
+        self.lines: collections.deque[str] = collections.deque(maxlen=capacity)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            self.lines.append(self.format(record))
+        except Exception:  # noqa: BLE001
+            pass
+
+
+RING = RingBufferHandler()
+
+
 def setup_logging() -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(JsonFormatter())
+    RING.setFormatter(JsonFormatter())
     root = logging.getLogger()
-    root.handlers[:] = [handler]
+    root.handlers[:] = [handler, RING]
     root.setLevel(settings.log_level)
     for noisy in ("uvicorn.access",):
         logging.getLogger(noisy).disabled = True
@@ -125,10 +145,11 @@ async def render_metrics(pool) -> tuple[bytes, str]:
             async with conn.transaction(isolation="repeatable_read", readonly=True):
                 rows = await conn.fetch(
                     """
-                    WITH recent AS (SELECT id, total_seats FROM shows ORDER BY created_at DESC LIMIT $1)
+                    WITH recent AS (SELECT id, total_seats, created_at FROM shows ORDER BY created_at DESC LIMIT $1)
                     SELECT r.id, r.total_seats, s.status, count(s.*) AS n
                       FROM recent r LEFT JOIN seats s ON s.show_id = r.id
-                     GROUP BY r.id, r.total_seats, s.status
+                     GROUP BY r.id, r.total_seats, r.created_at, s.status
+                     ORDER BY r.created_at DESC
                     """, METRICS_SHOW_LIMIT)
                 totals = await conn.fetch("SELECT status, count(*) AS n FROM seats GROUP BY status")
         per_show: dict[str, dict] = {}
@@ -214,7 +235,7 @@ class ObservabilityMiddleware:
             route_path = getattr(route, "path", None) or "unmatched"
             method = scope.get("method", "")
             status = status_holder["status"]
-            if route_path not in ("/metrics", "/healthz"):
+            if route_path not in ("/metrics", "/healthz", "/logs"):
                 HTTP_REQUESTS.labels(method, route_path, str(status)).inc()
                 HTTP_LATENCY.labels(method, route_path).observe(dur)
                 fields = {"method": method, "path": scope.get("path"), "route": route_path,

@@ -2,14 +2,14 @@
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
 from . import auth, db, reservations, shows
 from .errors import ApiError, api_error_handler, validation_error_handler
 from .migrate import migrate
-from .observability import ObservabilityMiddleware, log, render_metrics, setup_logging
+from .observability import RING, ObservabilityMiddleware, log, render_metrics, setup_logging
 
 setup_logging()
 
@@ -63,3 +63,17 @@ async def readyz():
 async def metrics():
     body, ctype = await render_metrics(db.pool())
     return Response(content=body, media_type=ctype)
+
+
+@app.get("/logs")
+async def recent_logs(tail: int = Query(200, ge=1, le=5000), request_id: str | None = None,
+                      contains: str | None = None):
+    """Public read of this worker's recent structured logs (newest last).
+    Filter by correlation id (?request_id=...) or substring (?contains=seat_taken)."""
+    lines = list(RING.lines)
+    if request_id:
+        lines = [x for x in lines if request_id in x]
+    if contains:
+        lines = [x for x in lines if contains in x]
+    body = "\n".join(lines[-tail:]) + "\n"
+    return Response(content=body, media_type="application/x-ndjson")
