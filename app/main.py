@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import auth, db, shows
+from . import auth, db, reservations, shows
 from .errors import ApiError, api_error_handler, validation_error_handler
 from .migrate import migrate
 
@@ -33,6 +33,7 @@ app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
 app.include_router(auth.router)
 app.include_router(shows.router)
+app.include_router(reservations.router)
 
 
 @app.get("/healthz")

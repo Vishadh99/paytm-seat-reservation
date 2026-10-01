@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
     key            text        NOT NULL,
     request_hash   text        NOT NULL,
     status_code    integer,
-    response       jsonb,
+    response       json,             -- json (not jsonb) keeps replayed bodies byte-identical
     reservation_id uuid,
     created_at     timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (user_id, key)
