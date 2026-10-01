@@ -3,9 +3,12 @@ import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from . import db
+from . import auth, db, shows
+from .errors import ApiError, api_error_handler, validation_error_handler
+from .migrate import migrate
 
 
 @asynccontextmanager
@@ -14,17 +17,22 @@ async def lifespan(app: FastAPI):
     # later than the app still converges to healthy instead of crash-looping.
     for attempt in range(30):
         try:
-            await db.init_pool()
+            pool = await db.init_pool()
             break
         except Exception:  # noqa: BLE001
             if attempt == 29:
                 raise
             await asyncio.sleep(2)
+    await migrate(pool)
     yield
     await db.close_pool()
 
 
 app = FastAPI(title="seat-reservation", lifespan=lifespan)
+app.add_exception_handler(ApiError, api_error_handler)
+app.add_exception_handler(RequestValidationError, validation_error_handler)
+app.include_router(auth.router)
+app.include_router(shows.router)
 
 
 @app.get("/healthz")

@@ -23,7 +23,7 @@ class Settings:
     # How long a request may wait for a pooled connection before we give up.
     # Kept generous: under a burst, queueing is the correct behaviour, not failing.
     db_acquire_timeout_s: float = float(os.environ.get("DB_ACQUIRE_TIMEOUT_S", "60"))
-    jwt_secret: str = os.environ.get("JWT_SECRET", "dev-only-secret-change-me")
+    jwt_secret: str = os.environ.get("JWT_SECRET", "dev-only-insecure-secret-change-me-in-prod-0123456789")
     jwt_ttl_s: int = _int("JWT_TTL_S", 24 * 3600)
     # Demo identity provider: lets anyone mint a token for a user id. Admin tokens
     # additionally require ADMIN_KEY unless it is left empty.

@@ -18,7 +18,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://postgres:postgres@db:5432/seats
-      JWT_SECRET: local-dev-secret
+      JWT_SECRET: local-dev-secret-at-least-32-bytes-long-xx
       DB_POOL_MAX: "40"
     ports:
       - "8080:8080"
