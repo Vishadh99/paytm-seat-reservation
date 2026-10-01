@@ -9,12 +9,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
+COPY docker-entrypoint.sh ./
 
 RUN useradd --create-home appuser
 USER appuser
 
 EXPOSE 8080
-# Single worker on purpose: asyncio handles the concurrency, and a single process
-# keeps Prometheus counters exact (no multiprocess aggregation to get wrong).
-# Large backlog so a connection stampede queues in the kernel instead of being refused.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --backlog 4096 --timeout-keep-alive 30 --no-access-log"]
+# WEB_CONCURRENCY = worker processes (~1 per vCPU). Correctness never depends on it:
+# every decision is made inside Postgres, so N workers or N replicas behave the same.
+CMD ["./docker-entrypoint.sh"]

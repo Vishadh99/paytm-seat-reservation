@@ -14,7 +14,10 @@ import traceback
 import uuid
 from datetime import datetime, timezone
 
-from prometheus_client import CONTENT_TYPE_LATEST, Counter, Gauge, Histogram, generate_latest
+import os
+
+from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram,
+                               generate_latest, multiprocess)
 
 from .config import settings
 
@@ -86,21 +89,36 @@ HTTP_REQUESTS = Counter(
 HTTP_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "route"],
     buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30))
-HTTP_IN_FLIGHT = Gauge("http_requests_in_flight", "Requests currently being served")
+HTTP_IN_FLIGHT = Gauge("http_requests_in_flight", "Requests currently being served", multiprocess_mode="livesum")
+DB_POOL_SIZE = Gauge("db_pool_size", "Open DB connections in the pool", multiprocess_mode="livesum")
+DB_POOL_IDLE = Gauge("db_pool_idle", "Idle DB connections in the pool", multiprocess_mode="livesum")
 
-SEATS = Gauge("seats", "Seats per show by status (read from Postgres at scrape time)", ["show_id", "status"])
-SEATS_ALL = Gauge("seats_all_shows", "Seats across all shows by status", ["status"])
-SEATS_AVAILABLE = Gauge("seats_available", "Available seats per show", ["show_id"])
-INVARIANT_OK = Gauge(
-    "reconciliation_invariant_ok", "1 if available+held+confirmed == total_seats for the show", ["show_id"])
-DB_POOL_SIZE = Gauge("db_pool_size", "Open DB connections in the pool")
-DB_POOL_IDLE = Gauge("db_pool_idle", "Idle DB connections in the pool")
-DB_UP = Gauge("db_up", "1 if the last metrics scrape could query Postgres")
+# With WEB_CONCURRENCY > 1 the entrypoint sets PROMETHEUS_MULTIPROC_DIR and every worker
+# writes its counters there; a scrape (served by any worker) aggregates all of them.
+MULTIPROC = bool(os.environ.get("PROMETHEUS_MULTIPROC_DIR"))
 
 METRICS_SHOW_LIMIT = 25  # bound label cardinality: most recent shows only
 
 
 async def render_metrics(pool) -> tuple[bytes, str]:
+    # 1. process-local (or multiprocess-aggregated) counters/histograms
+    if MULTIPROC:
+        reg = CollectorRegistry()
+        multiprocess.MultiProcessCollector(reg)
+        app_metrics = generate_latest(reg)
+    else:
+        app_metrics = generate_latest()
+
+    # 2. state gauges, built fresh per scrape from one Postgres snapshot. They live in a
+    #    throwaway registry so there is no per-worker gauge state to go stale or disagree.
+    reg = CollectorRegistry()
+    seats = Gauge("seats", "Seats per show by status (read from Postgres at scrape time)",
+                  ["show_id", "status"], registry=reg)
+    seats_available = Gauge("seats_available", "Available seats per show", ["show_id"], registry=reg)
+    invariant = Gauge("reconciliation_invariant_ok",
+                      "1 if available+held+confirmed == total_seats for the show", ["show_id"], registry=reg)
+    seats_all = Gauge("seats_all_shows", "Seats across all shows by status", ["status"], registry=reg)
+    db_up = Gauge("db_up", "1 if this scrape could query Postgres", registry=reg)
     try:
         async with pool.acquire(timeout=2) as conn:
             async with conn.transaction(isolation="repeatable_read", readonly=True):
@@ -112,27 +130,25 @@ async def render_metrics(pool) -> tuple[bytes, str]:
                      GROUP BY r.id, r.total_seats, s.status
                     """, METRICS_SHOW_LIMIT)
                 totals = await conn.fetch("SELECT status, count(*) AS n FROM seats GROUP BY status")
-        SEATS.clear(); SEATS_AVAILABLE.clear(); INVARIANT_OK.clear()
         per_show: dict[str, dict] = {}
         for r in rows:
-            sid = str(r["id"])
-            d = per_show.setdefault(sid, {"total": r["total_seats"], "available": 0, "held": 0, "confirmed": 0})
+            d = per_show.setdefault(str(r["id"]), {"total": r["total_seats"], "available": 0, "held": 0, "confirmed": 0})
             if r["status"]:
                 d[r["status"]] = r["n"]
         for sid, d in per_show.items():
             for st in ("available", "held", "confirmed"):
-                SEATS.labels(sid, st).set(d[st])
-            SEATS_AVAILABLE.labels(sid).set(d["available"])
-            INVARIANT_OK.labels(sid).set(1 if d["available"] + d["held"] + d["confirmed"] == d["total"] else 0)
+                seats.labels(sid, st).set(d[st])
+            seats_available.labels(sid).set(d["available"])
+            invariant.labels(sid).set(1 if d["available"] + d["held"] + d["confirmed"] == d["total"] else 0)
         t = {r["status"]: r["n"] for r in totals}
         for st in ("available", "held", "confirmed"):
-            SEATS_ALL.labels(st).set(t.get(st, 0))
-        DB_UP.set(1)
+            seats_all.labels(st).set(t.get(st, 0))
+        db_up.set(1)
     except Exception:  # noqa: BLE001 — metrics must still render when the DB is down
-        DB_UP.set(0)
+        db_up.set(0)
     DB_POOL_SIZE.set(pool.get_size())
     DB_POOL_IDLE.set(pool.get_idle_size())
-    return generate_latest(), CONTENT_TYPE_LATEST
+    return app_metrics + generate_latest(reg), CONTENT_TYPE_LATEST
 
 
 # ----------------------------------------------------------------------------- middleware
