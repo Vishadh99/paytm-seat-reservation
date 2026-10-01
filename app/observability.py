@@ -18,6 +18,7 @@ import os
 
 from prometheus_client import (CONTENT_TYPE_LATEST, CollectorRegistry, Counter, Gauge, Histogram,
                                generate_latest, multiprocess)
+from prometheus_client.core import GaugeMetricFamily
 
 from .config import settings
 
@@ -109,16 +110,16 @@ async def render_metrics(pool) -> tuple[bytes, str]:
     else:
         app_metrics = generate_latest()
 
-    # 2. state gauges, built fresh per scrape from one Postgres snapshot. They live in a
-    #    throwaway registry so there is no per-worker gauge state to go stale or disagree.
-    reg = CollectorRegistry()
-    seats = Gauge("seats", "Seats per show by status (read from Postgres at scrape time)",
-                  ["show_id", "status"], registry=reg)
-    seats_available = Gauge("seats_available", "Available seats per show", ["show_id"], registry=reg)
-    invariant = Gauge("reconciliation_invariant_ok",
-                      "1 if available+held+confirmed == total_seats for the show", ["show_id"], registry=reg)
-    seats_all = Gauge("seats_all_shows", "Seats across all shows by status", ["status"], registry=reg)
-    db_up = Gauge("db_up", "1 if this scrape could query Postgres", registry=reg)
+    # 2. state gauges, built fresh per scrape from one Postgres snapshot. They are plain
+    #    metric families (no stored value), so in multi-worker mode they are not written to
+    #    per-process files and can never go stale or be duplicated per pid.
+    seats = GaugeMetricFamily("seats", "Seats per show by status (read from Postgres at scrape time)",
+                              labels=["show_id", "status"])
+    seats_available = GaugeMetricFamily("seats_available", "Available seats per show", labels=["show_id"])
+    invariant = GaugeMetricFamily("reconciliation_invariant_ok",
+                                  "1 if available+held+confirmed == total_seats for the show", labels=["show_id"])
+    seats_all = GaugeMetricFamily("seats_all_shows", "Seats across all shows by status", labels=["status"])
+    db_up = 0
     try:
         async with pool.acquire(timeout=2) as conn:
             async with conn.transaction(isolation="repeatable_read", readonly=True):
@@ -137,15 +138,23 @@ async def render_metrics(pool) -> tuple[bytes, str]:
                 d[r["status"]] = r["n"]
         for sid, d in per_show.items():
             for st in ("available", "held", "confirmed"):
-                seats.labels(sid, st).set(d[st])
-            seats_available.labels(sid).set(d["available"])
-            invariant.labels(sid).set(1 if d["available"] + d["held"] + d["confirmed"] == d["total"] else 0)
+                seats.add_metric([sid, st], d[st])
+            seats_available.add_metric([sid], d["available"])
+            invariant.add_metric([sid], 1 if d["available"] + d["held"] + d["confirmed"] == d["total"] else 0)
         t = {r["status"]: r["n"] for r in totals}
         for st in ("available", "held", "confirmed"):
-            seats_all.labels(st).set(t.get(st, 0))
-        db_up.set(1)
+            seats_all.add_metric([st], t.get(st, 0))
+        db_up = 1
     except Exception:  # noqa: BLE001 — metrics must still render when the DB is down
-        db_up.set(0)
+        pass
+    up = GaugeMetricFamily("db_up", "1 if this scrape could query Postgres", value=db_up)
+
+    class _Snapshot:
+        def collect(self):
+            return [seats, seats_available, invariant, seats_all, up]
+
+    reg = CollectorRegistry()
+    reg.register(_Snapshot())
     DB_POOL_SIZE.set(pool.get_size())
     DB_POOL_IDLE.set(pool.get_idle_size())
     return app_metrics + generate_latest(reg), CONTENT_TYPE_LATEST

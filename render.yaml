@@ -1,0 +1,25 @@
+# Fallback deploy target: Render Blueprint (New > Blueprint > pick this repo).
+# Note: Render free web services sleep after 15 min idle (~1 min cold start) and
+# free Postgres expires after 30 days — Railway is the primary target (see README).
+services:
+  - type: web
+    name: seat-reservation
+    runtime: docker
+    plan: free
+    healthCheckPath: /readyz
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: seat-reservation-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEB_CONCURRENCY
+        value: "1"
+      - key: DB_POOL_MAX
+        value: "20"
+
+databases:
+  - name: seat-reservation-db
+    plan: free
+    databaseName: seats
