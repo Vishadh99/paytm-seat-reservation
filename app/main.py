@@ -2,12 +2,13 @@
 import asyncio
 from contextlib import asynccontextmanager
 
+import asyncpg
 from fastapi import FastAPI, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
 from . import auth, db, reservations, shows
-from .errors import ApiError, api_error_handler, validation_error_handler
+from .errors import ApiError, api_error_handler, dependency_down_handler, validation_error_handler
 from .migrate import migrate
 from .observability import RING, ObservabilityMiddleware, log, render_metrics, setup_logging
 
@@ -37,6 +38,9 @@ app = FastAPI(title="seat-reservation", lifespan=lifespan)
 app.add_middleware(ObservabilityMiddleware)
 app.add_exception_handler(ApiError, api_error_handler)
 app.add_exception_handler(RequestValidationError, validation_error_handler)
+for _exc in (OSError, asyncio.TimeoutError, asyncpg.PostgresConnectionError, asyncpg.InterfaceError,
+             asyncpg.exceptions.CannotConnectNowError, asyncpg.exceptions.TooManyConnectionsError):
+    app.add_exception_handler(_exc, dependency_down_handler)
 app.include_router(auth.router)
 app.include_router(shows.router)
 app.include_router(reservations.router)
