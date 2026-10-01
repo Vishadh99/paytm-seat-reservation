@@ -53,8 +53,10 @@ CREATE TABLE IF NOT EXISTS user_quota (
 );
 
 -- Idempotency keys are scoped to (authenticated user, show): user B can never replay or
--- collide with user A's key, and a client reusing "k1" on a different show is a new request. We store the final HTTP outcome (success *or* decline)
--- so a retry gets byte-for-byte the same answer.
+-- collide with user A's key, and reusing "k1" on a different show is a new request.
+-- A key is bound only to a *successful* reservation (written in the same transaction);
+-- a declined attempt rolls back and leaves no key, so its retry is re-evaluated.
+-- The stored response lets a retry get byte-for-byte the original answer.
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     user_id        text        NOT NULL,
     show_id        uuid        NOT NULL,

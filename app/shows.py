@@ -76,6 +76,12 @@ async def create_show(body: CreateShow, admin: Principal = Depends(current_admin
                 "SELECT $1, label, ord::int FROM unnest($2::text[]) WITH ORDINALITY AS t(label, ord)",
                 show_id, body.seats,
             )
+        # Refresh planner statistics. On a fresh table Postgres believes a show has ~1
+        # seat and plans `label = ANY(...)` as a filter over the whole show instead of an
+        # index condition — measured ~20x slower per reserve. Cheap (sampled) and only
+        # runs on the admin path, never during the on-sale burst.
+        await conn.execute("ANALYZE seats")
+        await conn.execute("ANALYZE shows")
         return await load_show_state(conn, show_id)
 
 
