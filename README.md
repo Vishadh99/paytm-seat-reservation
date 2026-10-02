@@ -5,7 +5,7 @@ tens of thousands of buyers hit "book" in the same second. It never double-sells
 seat, never lets a user go over their limit, and never double-books a retried request.
 FastAPI + asyncpg + a single Postgres.
 
-**Live URL:** `https://<your-app>.up.railway.app` ← *replace after deploy*
+**Live URL:** https://seat-reservation-production-9e4d.up.railway.app
 
 | | |
 |---|---|
@@ -20,9 +20,9 @@ FastAPI + asyncpg + a single Postgres.
 
 ```bash
 pip install aiohttp
-python scripts/burst.py https://<your-app>.up.railway.app          # ~20,000 requests
+python scripts/burst.py https://seat-reservation-production-9e4d.up.railway.app          # ~20,000 requests
 # or
-make burst BASE_URL=https://<your-app>.up.railway.app
+make burst BASE_URL=https://seat-reservation-production-9e4d.up.railway.app
 ```
 
 The script creates a fresh 2,000-seat show and mints tokens for about 4,000 users.
@@ -92,7 +92,7 @@ Useful knobs: `--requests`, `--concurrency`, `--seats`, `--hot-seats`,
 To **watch it live**, run this in a second terminal:
 
 ```bash
-python scripts/watch.py https://<your-app>.up.railway.app
+python scripts/watch.py https://seat-reservation-production-9e4d.up.railway.app
 # 16:06:38  1278 req/s | confirmed 416 | taken 5136 limit 228 replay 684 reuse 256 | 5xx 0 | show c7881cb7 avail 1584 held 0 conf 416 invariant OK
 ```
 
@@ -233,8 +233,8 @@ fallback (`render.yaml`).
    DB_POOL_MAX      = 20
    ```
 5. Go to **Settings → Networking → Generate Domain**, then:
-   `curl https://<app>.up.railway.app/readyz` → `{"status":"ready","db":"ok"}`
-6. `make burst BASE_URL=https://<app>.up.railway.app`
+   `curl https://seat-reservation-production-9e4d.up.railway.app/readyz` → `{"status":"ready","db":"ok"}`
+6. `make burst BASE_URL=https://seat-reservation-production-9e4d.up.railway.app`
 
 The schema is created on boot, under an advisory lock, so redeploys and multiple
 replicas are safe. Startup retries the DB connection for about 60 seconds, so a cold
