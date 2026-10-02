@@ -1,0 +1,20 @@
+# scripts/watch.py output during the live 20k burst (2026-10-02, Railway, 2 workers).
+# Counters are cumulative since the last deploy; confirmed went 258 -> 1691 (delta 1433),
+# matching the 1433 new reservations the burst client observed.
+# 23:38:16-23:38:35 = setup (show creation + 4,000 token mints); 23:38:41-23:38:58 = the burst.
+23:38:15        0 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show fa71bd82 avail 360 held 0 conf 1640 invariant OK
+23:38:16        2 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:17      399 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:19      734 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:20      741 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:22      667 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:24        7 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:35        4 req/s | confirmed    258 | taken   8053 limit   27 replay  250 reuse  123 | 5xx 0 | show 79e5cef5 avail 2000 held 0 conf 0 invariant OK
+23:38:41      387 req/s | confirmed    792 | taken   9725 limit   27 replay  270 reuse  132 | 5xx 0 | show 79e5cef5 avail 1372 held 0 conf 628 invariant OK
+23:38:43     1672 req/s | confirmed   1132 | taken  12727 limit   27 replay  347 reuse  173 | 5xx 0 | show 79e5cef5 avail 970 held 0 conf 1030 invariant OK
+23:38:46     1067 req/s | confirmed   1305 | taken  15247 limit   31 replay  431 reuse  204 | 5xx 0 | show 79e5cef5 avail 779 held 0 conf 1221 invariant OK
+23:38:48      978 req/s | confirmed   1410 | taken  17165 limit   40 replay  485 reuse  233 | 5xx 0 | show 79e5cef5 avail 652 held 0 conf 1348 invariant OK
+23:38:51      734 req/s | confirmed   1490 | taken  19044 limit   45 replay  554 reuse  256 | 5xx 0 | show 79e5cef5 avail 524 held 0 conf 1476 invariant OK
+23:38:54     1385 req/s | confirmed   1620 | taken  22834 limit   50 replay  683 reuse  317 | 5xx 0 | show 79e5cef5 avail 434 held 0 conf 1566 invariant OK
+23:38:58      765 req/s | confirmed   1691 | taken  25805 limit   67 replay  769 reuse  370 | 5xx 0 | show 79e5cef5 avail 364 held 0 conf 1636 invariant OK
+23:39:00        5 req/s | confirmed   1691 | taken  25810 limit   67 replay  770 reuse  370 | 5xx 0 | show 79e5cef5 avail 364 held 0 conf 1636 invariant OK

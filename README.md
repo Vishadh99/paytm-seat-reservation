@@ -41,7 +41,7 @@ burst. Afterwards it reconciles what the client saw with `GET /shows` and `/metr
 It prints the outcome distribution and a PASS/FAIL checklist, and exits non-zero on
 any failure.
 
-**Live result** against the deployed Railway service (2 workers, run from a laptop in Mumbai on 2026-10-02; full log in [`docs/live-burst-2026-10-02.txt`](docs/live-burst-2026-10-02.txt)):
+**Live result** against the deployed Railway service (2 workers, run from a laptop in Mumbai on 2026-10-02; full log in [`docs/live-burst-2026-10-02.txt`](docs/live-burst-2026-10-02.txt); the live metrics view during the same run is in [`docs/live-watch-2026-10-02.txt`](docs/live-watch-2026-10-02.txt)):
 
 ```
 burst: 20000 requests in 26.28s  (761 req/s)   latency p50=656ms p95=2168ms p99=9022ms
