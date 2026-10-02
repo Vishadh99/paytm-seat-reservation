@@ -1,0 +1,47 @@
+» open-file limit: 65536
+» target https://seat-reservation-production-9e4d.up.railway.app
+» ready after 0.4s
+» show 79e5cef5-2c86-4bf4-8dfa-f3ff24ebe5ce: 2000 seats, per_user_limit=4
+» minted 4000 user tokens
+» firing 20000 reserve requests at concurrency 1000 …
+
+burst: 20000 requests in 26.28s  (761 req/s)   latency p50=656ms p95=2168ms p99=9022ms
+
+HTTP status         {201: 1953, 409: 18047}   (client connect retries: 0)
+
+outcome distribution
+  seat_taken                17760
+  confirmed                  1433
+  idempotent_replay           520
+  idempotency_key_reuse       247
+  per_user_limit               40
+
+by scenario
+  general          {'seat_taken': 12195, 'confirmed': 1084, 'per_user_limit': 1}
+  hot              {'seat_taken': 4990, 'confirmed': 10}
+  retry            {'idempotent_replay': 520, 'seat_taken': 226, 'confirmed': 130, 'idempotency_key_reuse': 124}
+  limit            {'seat_taken': 288, 'confirmed': 173, 'per_user_limit': 39}
+  retry_conflict   {'idempotency_key_reuse': 123, 'seat_taken': 49, 'confirmed': 28}
+  spoof            {'seat_taken': 12, 'confirmed': 8}
+
+final show state    {'available': 364, 'held': 0, 'confirmed': 1636, 'total': 2000}   total_seats=2000
+distinct reservations 1433   seats confirmed (client view) 1636
+
+checks
+  [PASS] no seat confirmed to two reservations
+  [PASS] hot seats: exactly one owner each, rest clean 409 (500 contenders/seat)  — A1:1w/499x409 A2:1w/499x409 A3:1w/499x409 A4:1w/499x409 A5:1w/499x409 …
+  [PASS] zero 5xx across the burst  — 0 x 5xx
+  [PASS] zero network errors / timeouts  — 0 errors
+  [PASS] invariant after: available+held+confirmed == total  — {'available': 364, 'held': 0, 'confirmed': 1636, 'total': 2000}
+  [PASS] invariant during burst (22 samples)  — []
+  [PASS] server confirmed seats == seats in client-observed 201s  — server=1636 client=1636
+  [PASS] every seat in a 201 is confirmed on the server
+  [PASS] amounts are integer paise == price * seats
+  [PASS] idempotency: one reservation per key; different body on same key -> 409  — replays=520 reuse409=247
+  [PASS] per-user limit holds (limit=4; max seats by a 10-parallel user = 4)
+  [PASS] spoofed body user_id ignored (identity from token)
+  [PASS] cancel of another user's reservation is refused (403)  — statuses=Counter({403: 10})
+  [PASS] metrics: Δreservations_confirmed_total == new reservations  — metric Δ=1433 client=1433 (assumes single replica, no concurrent traffic)
+  [PASS] metrics: seats_available gauge == GET /shows available  — gauge=364.0 api=364
+
+ALL CHECKS PASSED
