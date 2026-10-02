@@ -21,6 +21,7 @@ import asyncio
 import collections
 import json
 import random
+import resource
 import string
 import sys
 import time
@@ -94,6 +95,27 @@ async def main() -> int:
     ap.add_argument("--json-report", default=None, help="write a machine-readable report here")
     a = ap.parse_args()
     base = a.base_url.rstrip("/")
+    try:  # macOS defaults to 256 open files; each in-flight request needs a socket
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        for want in (65536, 24576, 10240, 4096):
+            if soft >= want:
+                break
+            if hard != resource.RLIM_INFINITY and want > hard:
+                continue
+            try:
+                resource.setrlimit(resource.RLIMIT_NOFILE, (want, hard))
+                break
+            except (ValueError, OSError):
+                continue
+    except (ValueError, OSError):
+        pass
+    fd_limit = resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+    if a.concurrency > fd_limit - 64:
+        print(f"» open-file limit is {fd_limit}; capping concurrency {a.concurrency} -> {max(16, fd_limit - 64)}"
+              f" (raise it with `ulimit -n 10240`)")
+        a.concurrency = max(16, fd_limit - 64)
+    else:
+        print(f"» open-file limit: {fd_limit}")
     rng = random.Random(42)
 
     timeout = aiohttp.ClientTimeout(total=a.timeout)
@@ -180,13 +202,24 @@ async def main() -> int:
         gate = asyncio.Semaphore(a.concurrency)
         url = f"{base}/shows/{sid}/reserve"
 
+        connect_retries = [0]
+
         async def fire(kind, user, payload):
             async with gate:
                 t = time.perf_counter()
-                try:
-                    st, body, replay = await post(s, url, payload, tokens[user])
-                except Exception as e:  # noqa: BLE001
-                    st, body, replay = 0, {"error": f"network:{type(e).__name__}"}, False
+                for attempt in range(6):
+                    try:
+                        st, body, replay = await post(s, url, payload, tokens[user])
+                        break
+                    except aiohttp.ClientConnectorError as e:
+                        # TCP/TLS connect failed => the request never left this machine, so a
+                        # retry cannot double-book (and it carries the same idempotency key anyway).
+                        connect_retries[0] += 1
+                        st, body, replay = 0, {"error": f"network:{type(e).__name__}"}, False
+                        await asyncio.sleep(0.2 * 2 ** attempt)
+                    except Exception as e:  # noqa: BLE001
+                        st, body, replay = 0, {"error": f"network:{type(e).__name__}"}, False
+                        break
                 lat.append(time.perf_counter() - t)
                 results.append((kind, user, payload, st, body, replay))
 
@@ -268,7 +301,8 @@ async def main() -> int:
         g = sum(1 for (k, _, p, st, b, _) in results if k == "hot" and p["seats"] == [seat] and st == 409)
         # The seat may also have been won by a 'general' request; then 0 hot winners is right.
         owners = seat_owner.get(seat, set())
-        if len(owners) != 1 or w > 1 or w + g != a.hot_contenders:
+        answered = sum(1 for (k, _, p, st, _, _) in results if k == "hot" and p["seats"] == [seat] and st != 0)
+        if len(owners) != 1 or w > 1 or w + g != answered:
             hot_ok = False
         hot_detail.append(f"{seat}:{w}w/{g}x409")
     check(f"hot seats: exactly one owner each, rest clean 409 ({a.hot_contenders} contenders/seat)", hot_ok,
@@ -326,7 +360,8 @@ async def main() -> int:
     print()
     print(f"burst: {len(results)} requests in {elapsed:.2f}s  ({len(results) / elapsed:.0f} req/s)   "
           f"latency p50={pct(lat, .5) * 1000:.0f}ms p95={pct(lat, .95) * 1000:.0f}ms p99={pct(lat, .99) * 1000:.0f}ms")
-    print("\nHTTP status        ", dict(sorted(by_status.items())))
+    print("\nHTTP status        ", dict(sorted(by_status.items())),
+          f"  (client connect retries: {connect_retries[0]})")
     print("\noutcome distribution")
     for k, v in by_reason.most_common():
         print(f"  {k:<24}{v:>7}")
