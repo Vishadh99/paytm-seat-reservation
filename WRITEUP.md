@@ -189,7 +189,9 @@ Here is the honest split.
 - The working mode: pair-build in small commits, with each design decision explained
   before moving on, so that I can defend and extend it live.
 - That the platform choice would be made against free-tier constraints.
-- *(Vishadh: add anything you changed or pushed back on while reviewing — be specific.)*
+-  I deployed and operated the service on Railway myself. Railway's import of `render.yaml` left `DATABASE_URL` as an empty string; I re-pointed it at the Postgres service and raised `WEB_CONCURRENCY` to 2 for the 2-vCPU plan.
+- I ran the live bursts from my laptop. The first run showed 686 client-side `ClientConnectorError`s while the server stayed at 0 × 5xx; we traced it to macOS's default 256 open-file limit, and the burst script now raises the limit and retries client-side connect failures.
+- A second run overlapped a Railway redeploy, which reset the in-memory counters mid-burst — the reason I'd alert on `increase()`/`rate()` rather than raw counter deltas. The clean third run passed every check.
 
 **What the AI proposed and implemented, which I reviewed**
 - The core mechanism: guarded `UPDATE … WHERE status='available'` with `ORDER BY label FOR
