@@ -46,6 +46,27 @@ app.include_router(shows.router)
 app.include_router(reservations.router)
 
 
+@app.get("/")
+async def index():
+    """Service index so the bare URL is self-describing for reviewers."""
+    return {
+        "service": "seat-reservation",
+        "repo": "https://github.com/Vishadh99/paytm-seat-reservation",
+        "endpoints": {
+            "POST /auth/token": "demo identity provider: {\"user_id\": \"alice\"} (add \"admin\": true for admin)",
+            "POST /shows": "create a show (admin)",
+            "GET /shows/{id}": "per-seat status + counts (available + held + confirmed == total)",
+            "POST /shows/{id}/reserve": "reserve seats: {\"seats\": [\"A12\"], \"idempotency_key\": \"...\"}",
+            "POST /reservations/{id}/cancel": "owner-only cancel",
+            "GET /healthz": "liveness",
+            "GET /readyz": "readiness (checks Postgres, 503 when down)",
+            "GET /metrics": "Prometheus metrics",
+            "GET /logs": "recent structured logs (?request_id=, ?contains=)",
+            "GET /docs": "interactive OpenAPI docs",
+        },
+    }
+
+
 @app.get("/healthz")
 async def healthz():
     """Liveness: the process is up and serving. Deliberately no dependency checks."""
